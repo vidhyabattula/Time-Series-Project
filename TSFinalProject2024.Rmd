@@ -1,0 +1,466 @@
+---
+title: "WALMART_FORECAST"
+author: "Sri Vidya Battula"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r }
+library(dplyr)
+library(forecast)
+```
+
+
+```{r }
+#data extraction
+walmart_data <- read.csv("F:/Downloads/walmart_cleaned.csv")
+head(walmart_data)
+```
+
+```{r}
+#data cleaning
+walmart_data$Date <- as.Date(walmart_data$Date)
+walmart_data <- walmart_data%>%
+  filter(walmart_data$Store == 1)
+walmart_data <- walmart_data %>% 
+  select(-Size, -Type)
+```
+
+```{r}
+#DATA PREPROCESSING
+# Load the required library
+library(dplyr)
+
+#walmart_data$IsHoliday <- as.factor(walmart_data$IsHoliday)
+
+# Aggregate the data by Date
+walmart_aggregated <- walmart_data %>%
+  group_by(Date) %>%
+  summarise(
+    Weekly_Sales = sum(Weekly_Sales),
+    Temperature = mean(Temperature),
+    Fuel_Price = mean(Fuel_Price),
+    CPI = mean(CPI),
+    Unemployment = mean(Unemployment),
+    MarkDown1 = mean(MarkDown1),
+    MarkDown2 = mean(MarkDown2),
+    MarkDown3 = mean(MarkDown3),
+    MarkDown4 = mean(MarkDown4),
+    MarkDown5 = mean(MarkDown5),
+    IsHoliday = first(IsHoliday)
+  )
+walmart_aggregated <- na.omit(walmart_aggregated)
+```
+
+```{r}
+#CG
+# Convert Date column to Date type if not already done
+walmart_aggregated$Date <- as.Date(walmart_aggregated$Date)
+
+# Create a time series object
+walmart_ts <- ts(walmart_aggregated$Weekly_Sales, start = c(2010, 2), frequency = 52)
+
+# Number of validation periods
+nValid <- 52  #want to validate for 52 weeks (1 year)
+
+# Length of training data
+nTrain <- length(walmart_ts) - nValid
+
+# Training data
+train_ts <- window(walmart_ts, start = c(2010, 2), end = c(2010, nTrain))
+
+# Validation data
+valid_ts <- window(walmart_ts, start = c(2010, nTrain + 1), end = c(2010, nTrain + nValid))
+
+```
+
+```{r}
+walmart_aggregated$Date <- as.Date(walmart_aggregated$Date)
+nValid <- 114  #want to validate for 52 weeks (1 year)
+
+# Length of training data
+nTrain <- nrow(walmart_aggregated) - nValid
+#train_ts <- walmart_aggregated[1:nTrain]
+#valid_ts <- walmart_aggregated[(nTrain + 1):(nTrain + nValid)]
+
+# Training data
+train_ts <- window(walmart_aggregated, start = c(2010, 2), end = c(2010, nTrain))
+
+# Validation data
+valid_ts <- window(walmart_aggregated, start = c(2010, nTrain + 1), end = c(2010, nTrain + nValid))
+
+```
+
+
+```{r}
+#DATA PARITIONING-- not using
+walmart_aggregated <- walmart_aggregated[order(walmart_aggregated$Date), ]
+
+# Determine the number of rows for training and validation sets
+n_train <- round(0.8 * nrow(walmart_aggregated))  # 80% for training
+
+# Create the training set
+train_data <- walmart_aggregated[1:n_train, ]
+
+# Create the validation set
+validation_data <- walmart_aggregated[(n_train + 1):nrow(walmart_aggregated), ]
+```
+
+
+```{r}
+weekly_sales <- aggregate(Weekly_Sales ~ Date, data = walmart_aggregated, sum) #total weekly sales
+
+library(ggplot2)
+# Plotting the trend line
+ggplot(walmart_aggregated, aes(x = Date, y = Weekly_Sales)) +
+  geom_line() +
+  labs(title = "Weekly Sales Trend", x = "Date", y = "Weekly Sales") +
+  theme_minimal()
+```
+
+```{r}
+#Weekly_Sales_ts <- ts(train_data$Weekly_Sales, frequency = 52)
+#walmart_ts - time series object
+```
+
+```{r}
+train_data$t <- seq(1:114)
+cyc1 <- sin(2*pi*train_data$t/104)
+cyc2 <- cos(2*pi*train_data$t/104)
+```
+
+
+```{r}
+#walmart_ts_transformed <- log(walmart_ts)
+walmart_ts_transformed <- log(walmart_ts)
+```
+
+```{r}
+
+# Check the summary of the transformed model
+DTWS_cyc1 <- summary(tslm(Weekly_Sales_ts~cyc1))# 0.001113
+DTWS_cyc2 <- summary(tslm(Weekly_Sales_ts~cyc2)) #0.01205
+DTWS_season <- summary(tslm(Weekly_Sales_ts~season)) #0.8573
+DTWS_trend <- summary(tslm(Weekly_Sales_ts~trend)) #0.04603
+DTWS_trend2 <- summary(tslm(Weekly_Sales_ts~I(trend^2))) #0.03696
+DTWS_trend3 <- summary(tslm(Weekly_Sales_ts~I(trend^3))) #0.02649
+DTWS_trend4 <- summary(tslm(Weekly_Sales_ts~I(trend^4))) #0.01826
+DTWS_final <- tslm(walmart_ts_transformed~trend+season)#0.9413
+summary(DTWS_final)
+#highly significant seasonal trend
+```
+
+```{r}
+DTWS_res <- DTWS_final$residuals
+plot(DTWS_res, main = "Residuals of the model")
+```
+
+```{r}
+suppressPackageStartupMessages(library(car))
+durbinWatsonTest(DTWS_final)
+# p-value is significant, so we reject the null hypothesis and confirm the presence of serial autocorrelation
+```
+```{r}
+#par(mfrow=c(1,2))
+acf <- Acf(DTWS_res)
+#pacf <- Pacf(DTWS_res)
+```
+```{r}
+pacf <- Pacf(DTWS_res)
+#ar(4), ar(52),ma(4),
+```
+
+```{r}
+acf
+pacf
+```
+
+```{r}
+ARMA1 <- Arima(DTWS_res, order=c(0,0,52))
+summary(ARMA1)
+```
+```{r}
+
+ARMA1_resids <- ARMA1$residuals
+#par(mfrow=c(1,2))
+acf <- Acf(ARMA1_resids)
+```
+```{r}
+pacf <- Pacf(ARMA1_resids)
+#AR(52), MA(52)
+```
+```{r}
+train_pred <- forecast(ARMA1, h = 52)
+plot(train_pred, main="Forecast from ARIMA(0,0,52)")
+```
+
+
+```{r}
+
+train_pred <- forecast(ARMA1, h = 52)
+plot(train_pred)
+lines(train_pred$fitted, ylim = c(-0.2, 0.2), lwd = 2, col = "blue")
+#axis(1, at = seq(2010, 2014, 1), labels = format(seq(2010, 2014, 1)))
+lines(DTWS_res, ylim = c(-0.2, 0.2), ylab = "Residuals", col="gray", xlab = "Time", bty = "l", xaxt = "n",
+xlab = "Time", bty = "l", xaxt = "n", main = "Forecast from ARIMA(4,0,0)", col="gray") #xlim = c(1991,2006.25))
+
+
+lines(c(2004.25 - 3, 2004.25 - 3), c(-500, 3500))
+lines(c(2004.25, 2004.25), c(-500, 3500))
+```
+
+```{r}
+
+
+train.pred <- forecast(ARMA3, h = nValid)
+plot(train.pred)
+lines(train.pred$fitted, lwd = 2, col = "blue")
+axis(2, at = seq(1995, 2016, 1), labels = format(seq(1995, 2016, 1)))
+lines(DTM, ylim = c(-0.25,0.25), ylab = "Residuals",
+xlab = "Time", bty = "l", xaxt = "n", xlim = c(1995,2016), main = "", col="gray")
+lines(c(2013 - 3, 2013 - 3), c(-500, 3500))
+lines(c(2014, 2014), c(-500, 3500))
+```
+
+```{r}
+# Plotting forecast
+plot(train_pred, ylim = c(-0.05, 0.05), ylab = "Forecast", xlab = "Time", main = "Forecast from ARIMA(4,0,0)")
+lines(train_pred$fitted, lwd = 2, col = "blue")
+
+# Adding axis
+axis(1, at = seq(2010, 2014, 1), labels = format(seq(2010, 2014, 1)))
+axis(2, at = seq(-0.2, 0.2, 0.05), labels = seq(-0.2, 0.2, 0.05))
+
+# Plotting residuals
+lines(DTWS_res, col = "gray")
+axis(1, at = seq(-0.2, 0.2, 0.05), labels = seq(-0.2, 0.2, 0.05), col = "gray", las = 1)
+
+# Adding vertical lines
+abline(v = 2012.75, col = "red", lty = 2)
+abline(v = 2013, col = "blue", lty = 2)
+
+```
+```{r}
+library(caret)
+library(neuralnet)
+```
+
+```{r}
+#Weekly_Sales_ts <- ts(train_data$Weekly_Sales, frequency = 52)
+setup<-nnetar(Weekly_Sales_ts[1:114], p=10, repeats=20, lambda="auto")
+Fcast<-forecast(setup, PI=TRUE, h=52)
+autoplot(Fcast)
+```
+#########################################################################################################
+#########################################################################################################
+#########################################################################################################
+#########################################################################################################
+#########################################################################################################
+###################################ARMAX################################
+
+
+```{r}
+walmart_ts <- ts(train_data$Weekly_Sales, start = c(2010, 2), frequency = 52)
+
+#for plotting
+#weekly_sales <- aggregate(walmart_ts ~ Date, data = train_data, sum) #total weekly sales
+
+library(ggplot2)
+# Plotting the trend line
+ggplot(train_data, aes(x = Date, y = walmart_ts)) +
+  geom_line() +
+  labs(title = "Weekly Sales Trend", x = "Date", y = "Weekly Sales") +
+  theme_minimal()
+
+```
+```{r}
+walmart_ts_transformed <- log(walmart_ts)
+DTWS_final <- tslm(walmart_ts_transformed~trend+season)#0.9495
+summary(DTWS_final)
+```
+
+```{r}
+DTWS_res<-DTWS_final$residuals
+plot(DTWS_res)
+```
+
+
+```{r}
+par(mfrow=c(1,2))
+ACF<-Acf(DTWS_res, main="ACF Function")
+PACF<-Pacf(DTWS_res, main="PACF Function")
+```
+
+```{r}
+#unemp = -0.1204778 -- signi 
+#CPI = 0.2496145 --signi
+#temp= -0.2107712
+#fuel = 0.1480281
+#M1 = 0.2690531-- signi
+#M2= 0.01818786
+#M3= 0.2550644
+#M4= 0.1988745
+#M5= 0.2328828
+
+correlation <- cor(walmart_ts_transformed, walmart_aggregated$MarkDown5)
+correlation
+```
+
+```{r}
+unemp<-ts(train_data$Unemployment,start = c(2010, 2), frequency = 52)
+plot(unemp, type="l")
+```
+```{r}
+DT_unemp<-tslm(unemp~trend+season+cyc1+I(trend^2))
+summary(DT_unemp)
+```
+
+```{r}
+DT_unemp_res<-DT_unemp$residuals
+plot(DT_unemp_res)
+```
+
+```{r}
+cor(DTWS_res, DT_unemp_res)
+```
+```{r}
+suppressMessages((library(data.table)))
+
+New_data_unemp<-data.frame(DTWS_res, DT_unemp_res)
+invisible(setDT(New_data_unemp)[,paste0('unemp_lag', 1:5):=shift(New_data_unemp$DT_unemp_res, 1:5)][])
+format(cor(New_data_unemp,use="complete.obs"), digits=4)
+```
+```{r}
+wsres<-ts(New_data_unemp$DT_unemp_res[6:143])
+unempres<-ts(New_data_unemp$unemp_lag1[6:143])
+ARMAX_data_1<-data.frame(wsres,unempres)
+```
+
+```{r}
+ARMAX1<-Arima(ts(ARMAX_data_1$wsres[1:114]), order=c(4,0,0), xreg=ARMAX_data_1[1:114,-c(1)])
+summary(ARMAX1)
+```
+
+```{r}
+ARMAX_res1<-ARMAX1$residuals
+par(mfrow=c(1,2))
+Acf(ARMAX_res1, main="ACF of the ARMAX residuals", col="darkred")
+Pacf(ARMAX_res1, main="PACF of the ARMAX residuals", col="purple")
+```
+```{r}
+nValid=29
+library(forecast)
+FCast<-predict(ARMAX1, newxreg=as.matrix(ARMAX_data_1$unempres[115:143]), h=29)
+```
+
+```{r}
+#Training set first:
+Training_noise<-DTWS$fitted.values[1:114]
+Training_signal<-ARMAX1$fitted[1:114]
+Training_total=Training_noise+Training_signal
+```
+
+```{r}
+#Validation set second:
+Valid_noise<-DTWS$fitted.values[115:143]
+Valid_signal<-FCast$pred
+Valid_total=Valid_noise+Valid_signal
+```
+
+```{r}
+plot(walmart_ts, ylim = c(1316900, 2387990), ylab = "Libvote",
+xlab = "Time", type = "l", xaxt = "n",
+xlim = c(1,143), main = "", lty = 2)
+axis(1, at = seq(1, 143, 1), labels = format(seq(1, 143, 1)))
+lines(DTWS$fitted.values[1:143], col="blue")
+lines(Training_total, lwd = 2, col="green")
+lines(Valid_total, lwd=2, col="red")
+lines(c(114, 114), c(0, 3))
+lines(c(143, 143), c(0, 3))
+legend("topleft", inset=c(0, 0), legend=c("Time-based noise forecast",
+"ARMAX on Training Data",
+"ARMAX on Validation Data"),
+col=c("blue","green", "red"), pch=1, cex=0.5)
+```
+
+```{r}
+cpi<-ts(train_data$CPI)
+plot(cpi, type="l")
+```
+
+```{r}
+DT_cpi<-tslm(cpi~trend+I(trend^2))
+summary(DT_cpi)
+```
+
+```{r}
+DT_cpi_res<-DT_cpi$residuals
+plot(DT_cpi_res)
+```
+
+```{r}
+cor(DTWS_res, DT_cpi_res)
+```
+```{r}
+New_data_cpi<-data.frame(DTWS_res, DT_cpi_res)
+invisible(setDT(New_data_cpi)[,paste0('cpi_lag', 1:5):=shift(New_data_cpi$DT_cpi_res, 1:5)][])
+format(cor(New_data_cpi,use="complete.obs"), digits=4)
+```
+
+```{r}
+wsres<-ts(New_data_cpi$DT_cpi_res[6:143])
+cpires<-ts(New_data_cpi$cpi_lag1[6:143])
+ARMAX_data_2<-data.frame(wsres,cpires)
+```
+
+```{r}
+markdown3<-ts(train_data$MarkDown3,start = c(2010, 2), frequency = 52)
+plot(markdown3, type="l")
+```
+
+```{r}
+train_data$SB <- ifelse(train_data$t <= 93, 0, 1)
+SB <- train_data$SB
+DT_markdown3<-tslm(markdown3~trend+season+SB+cyc1+cyc2)
+summary(DT_markdown3)
+```
+
+```{r}
+DT_markdown3_res<-DT_markdown3$residuals
+plot(DT_markdown3_res)
+```
+
+```{r}
+cor(DTWS_res, DT_markdown3_res)
+```
+```{r}
+New_data_markdown3<-data.frame(DTWS_res, DT_markdown3_res)
+invisible(setDT(New_data_markdown3)[,paste0('markdown3_lag', 1:5):=shift(New_data_markdown3$DT_markdown3_res, 1:5)][])
+format(cor(New_data_markdown3,use="complete.obs"), digits=4)
+```
+```{r}
+wsres<-ts(New_data_markdown3$DT_markdown3_res[6:143])
+markdown3res<-ts(New_data_markdown3$markdown3_lag1[6:143])
+ARMAX_data_3<-data.frame(wsres,markdown3res)
+```
+
+```{r}
+ARMAX1<-Arima(ts(ARMAX_data_3$Libres[1:114]), order=c(4,0,0), xreg=ARMAX_data[1:114,-c(1)])
+summary(ARMAX1)
+```
+
+```{r}
+ARMAX1<-Arima(ts(ARMAX_data$wsres[1:109]), order=c(4,0,0), xreg=ARMAX_data[1:109,-c(1)])
+summary(ARMAX1)
+
+# Fit ARMAX model with three independent variables
+ARMAX_model <- Arima(ts(dependent_variable), order = c(1, 0, 0), xreg = independent_variables)
+summary(ARMAX_model)
+```
+
+```{r}
+ARMAX_model <- Arima(ts(ARMAX_data$wsres[]), 
+                     order = c(4, 0, 0),  # ARIMA order
+                     xreg = as.matrix(ARMAX_data[, -1]))
+```
+
