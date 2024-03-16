@@ -1,0 +1,427 @@
+---
+title: "TIME-SERIES-PROJECT"
+author: "Sri Vidya Battula"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+library(dplyr)
+library(forecast)
+```
+
+```{r }
+#data extraction
+walmart_data <- read.csv("./walmart_cleaned.csv")
+head(walmart_data)
+```
+
+```{r}
+#data cleaning
+walmart_data$Date <- as.Date(walmart_data$Date)
+walmart_data <- walmart_data%>%
+  filter(walmart_data$Store == 1)
+walmart_data <- walmart_data %>% 
+  select(-Size, -Type)
+```
+
+```{r}
+#DATA PREPROCESSING
+# Load the required library
+library(dplyr)
+
+#walmart_data$IsHoliday <- as.factor(walmart_data$IsHoliday)
+
+# Aggregate the data by Date
+walmart_aggregated <- walmart_data %>%
+  group_by(Date) %>%
+  summarise(
+    Weekly_Sales = sum(Weekly_Sales),
+    Temperature = mean(Temperature),
+    Fuel_Price = mean(Fuel_Price),
+    CPI = mean(CPI),
+    Unemployment = mean(Unemployment),
+    MarkDown1 = mean(MarkDown1),
+    MarkDown2 = mean(MarkDown2),
+    MarkDown3 = mean(MarkDown3),
+    MarkDown4 = mean(MarkDown4),
+    MarkDown5 = mean(MarkDown5),
+    IsHoliday = first(IsHoliday)
+  )
+walmart_aggregated <- na.omit(walmart_aggregated)
+```
+
+```{r}
+weekly_sales<-ts(walmart_aggregated$Weekly_Sales, frequency=52)
+plot(weekly_sales, type="l", col="darkblue",lw=2)
+```
+
+
+```{r}
+
+walmart_aggregated$t <- seq(1:143)
+cyc1 <- sin(2*pi*walmart_aggregated$t/104)
+cyc2 <- cos(2*pi*walmart_aggregated$t/104)
+```
+
+
+
+```{r}
+log_weekly_sales<-log(weekly_sales)
+
+DTWS_cyc1 <- summary(tslm(weekly_sales~cyc1))# 0.001113
+DTWS_cyc2 <- summary(tslm(weekly_sales~cyc2)) #0.01205
+DTWS_season <- summary(tslm(weekly_sales~season)) #0.8573
+DTWS_trend <- summary(tslm(weekly_sales~trend)) #0.04603
+DTWS_trend2 <- summary(tslm(weekly_sales~I(trend^2))) #0.03696
+DTWS_trend3 <- summary(tslm(weekly_sales~I(trend^3))) #0.02649
+DTWS_trend4 <- summary(tslm(weekly_sales~I(trend^4))) #0.01826
+
+
+DTWS_final <- tslm(log_weekly_sales~trend+season)#0.9413
+summary(DTWS_final)
+```
+```{r}
+DTWS_res <- DTWS_final$residuals
+plot(DTWS_res, main = "Residuals of the model", lwd=2, color='darkblue')
+```
+
+
+
+```{r}
+#par(mfrow=c(1,2))
+acf=Acf(DTWS_res)
+```
+
+```{r}
+pacf=Pacf(DTWS_res)
+#AR(4), AR(52),MA(52)
+```
+############fuel
+
+```{r}
+fp<-ts(walmart_aggregated$Fuel_Price,frequency = 52)
+plot(fp, type="l")
+```
+
+```{r}
+DT_fp<-tslm(fp~trend+I(trend^2)+cyc1+season)
+summary(DT_fp)
+```
+
+```{r}
+DT_fp_res<-DT_fp$residuals
+plot(DT_fp_res)
+```
+
+```{r}
+cor(DTWS_res, DT_fp_res)
+```
+```{r}
+library(data.table)
+fp_data<-data.frame(DTWS_res, DT_fp_res)
+invisible(setDT(fp_data)[,paste0('fp_lag', 1:5):=shift(fp_data$DT_fp_res, 1:5)][])
+format(cor(fp_data,use="complete.obs"), digits=4)
+#DT_cpi_res is highest  ---0.11575
+```
+```{r}
+fpres<-ts(fp_data$fp_lag4[6:114])
+#ARMAX_data.append(data.frame(cpires))
+```
+###########unemployment
+```{r}
+unemp<-ts(walmart_aggregated$Unemployment,start = c(2010, 2), frequency = 52)
+plot(unemp, type="l")
+```
+
+```{r}
+DT_unemp<-tslm(unemp~trend+season+cyc1+I(trend^2))
+summary(DT_unemp)
+```
+
+```{r}
+DT_unemp_res<-DT_unemp$residuals
+plot(DT_unemp_res)
+```
+
+```{r}
+cor(DTWS_res, DT_unemp_res)
+```
+
+```{r}
+suppressMessages((library(data.table)))
+unemp_data<-data.frame(DTWS_res, DT_unemp_res)
+invisible(setDT(unemp_data)[,paste0('unemp_lag', 1:5):=shift(unemp_data$DT_unemp_res, 1:5)][])
+format(cor(unemp_data,use="complete.obs"), digits=4)
+#lag 3 is highest -- 0.12400
+```
+```{r}
+wsres<-ts(unemp_data$DTWS_res[6:114])
+unempres<-ts(unemp_data$unemp_lag3[6:114])
+#ARMAX_data<-data.frame(wsres,unempres)
+```
+
+############CPI
+
+```{r}
+cpi<-ts(walmart_aggregated$CPI)
+plot(cpi, type="l")
+```
+
+```{r}
+DT_cpi<-tslm(cpi~trend+I(trend^2))
+summary(DT_cpi)
+```
+
+```{r}
+DT_cpi_res<-DT_cpi$residuals
+plot(DT_cpi_res)
+```
+
+```{r}
+cor(DTWS_res, DT_cpi_res)
+```
+```{r}
+cpi_data<-data.frame(DTWS_res, DT_cpi_res)
+invisible(setDT(cpi_data)[,paste0('cpi_lag', 1:5):=shift(cpi_data$DT_cpi_res, 1:5)][])
+format(cor(cpi_data,use="complete.obs"), digits=4)
+#DT_cpi_res is highest  ---0.11575
+```
+```{r}
+cpires<-ts(cpi_data$DT_cpi_res[6:114])
+#ARMAX_data.append(data.frame(cpires))
+
+```
+
+#############Markdown 3
+```{r}
+markdown3<-ts(walmart_aggregated$MarkDown3,start = c(2010, 2), frequency = 52)
+plot(markdown3, type="l")
+```
+```{r}
+# Assuming markdown3 is the column you want to plot
+markdown3 <- walmart_aggregated$MarkDown3
+markdown3_log <- log(markdown3)
+# Plot histogram
+hist(markdown3_log, main = "Histogram of MarkDown3", xlab = "MarkDown3 Values", ylab = "Frequency")
+
+```
+
+```{r}
+walmart_aggregated$markdown3_log <- log1p(walmart_aggregated$MarkDown3)
+markdown3_log<-ts(walmart_aggregated$markdown3_log,start = c(2010, 2), frequency = 52)
+plot(markdown3_log, type="l")
+```
+
+```{r}
+walmart_aggregated$SB <- ifelse(walmart_aggregated$t <= 93, 0, 1)
+SB <- walmart_aggregated$SB
+DT_markdown3<-tslm(markdown3_log~trend+season+SB+cyc1+I(trend^2))
+summary(DT_markdown3)
+```
+
+```{r}
+DT_markdown3_res<-DT_markdown3$residuals
+plot(DT_markdown3_res)
+```
+
+```{r}
+cor(DTWS_res, DT_markdown3_res)
+```
+```{r}
+mkd3_data<-data.frame(DTWS_res, DT_markdown3_res)
+invisible(setDT(mkd3_data)[,paste0('mkd3_lag', 1:5):=shift(mkd3_data$DT_markdown3_res, 1:5)][])
+format(cor(mkd3_data,use="complete.obs"), digits=4)
+#lag 3 is highest -- 0.22477
+```
+
+```{r}
+mkd3res<-ts(mkd3_data$mkd3_lag3[6:114])
+```
+
+#############Markdown 5
+```{r}
+markdown5<-ts(walmart_aggregated$MarkDown5,start = c(2010, 2), frequency = 52)
+plot(markdown5, type="l")
+```
+
+```{r}
+# Assuming markdown3 is the column you want to plot
+markdown5 <- walmart_aggregated$MarkDown5
+markdown5_log <- log(markdown5)
+# Plot histogram
+hist(markdown5_log, main = "Histogram of MarkDown5", xlab = "MarkDown5 Values", ylab = "Frequency")
+
+```
+
+```{r}
+walmart_aggregated$markdown5_log <- log1p(walmart_aggregated$MarkDown5)
+markdown5_log<-ts(walmart_aggregated$markdown5_log,start = c(2010, 2), frequency = 52)
+plot(markdown5_log, type="l")
+```
+
+```{r}
+walmart_aggregated$SB <- ifelse(walmart_aggregated$t <= 93, 0, 1)
+SB <- walmart_aggregated$SB
+DT_markdown5<-tslm(markdown5_log~trend+season+SB+cyc1+I(trend^2))
+summary(DT_markdown3)
+```
+
+```{r}
+DT_markdown5_res<-DT_markdown5$residuals
+plot(DT_markdown5_res)
+```
+
+```{r}
+cor(DTWS_res, DT_markdown5_res)
+```
+```{r}
+mkd5_data<-data.frame(DTWS_res, DT_markdown5_res)
+invisible(setDT(mkd5_data)[,paste0('mkd5_lag', 1:5):=shift(mkd5_data$DT_markdown5_res, 1:5)][])
+format(cor(mkd5_data,use="complete.obs"), digits=4)
+#lag 4 is highest -- 0.22477
+```
+
+```{r}
+mkd5res<-ts(mkd5_data$mkd5_lag4[6:114])
+```
+
+```{r}
+ARMAX_data<-data.frame(wsres,unempres,cpires,mkd3res,mkd5res,fpres)
+```
+
+```{r}
+ARMAX_model <- Arima(ts(ARMAX_data$wsres[1:80]), 
+                     order = c(4, 0, 0),  # ARIMA order
+                     xreg = as.matrix(ARMAX_data[1:80, -1]))
+summary(ARMAX_model)
+```
+
+```{r}
+ARMAX_res<-ARMAX_model$residuals
+par(mfrow=c(1,2))
+Acf(ARMAX_res, main="ACF of the ARMAX residuals", col="darkred")
+Pacf(ARMAX_res, main="PACF of the ARMAX residuals", col="purple")
+```
+
+```{r}
+nValid=29
+library(forecast)
+#FCast<-predict(ARMAX_model, newxreg=as.matrix(ARMAX_data$Inflres[110:143]), h=29)
+
+# Define the new independent variables
+new_xreg <- as.matrix(ARMAX_data[, c("unempres", "cpires", "mkd3res","mkd5res","fpres")])[81:109, ]
+
+# Predict using ARMAX model with multiple independent variables
+FCast <- predict(ARMAX_model, newxreg = new_xreg, h = nValid)
+```
+
+```{r}
+suppressPackageStartupMessages((library(tseries)))
+#Training set first:
+Training_noise<-DTWS_final$fitted.values[1:80]
+Training_signal<-ARMAX_model$fitted[1:80]
+Training_total=Training_noise+Training_signal
+#Validation set second:
+Valid_noise<-DTWS_final$fitted.values[81:109]
+Valid_signal<-FCast$pred
+Valid_total=Valid_noise+Valid_signal
+```
+
+```{r}
+weekly_sales<-ts(walmart_aggregated$Weekly_Sales)
+plot(weekly_sales, ylim = c(1300000 , 2400000), ylab = "Weekly Sales",
+xlab = "Time", type = "l", xaxt = "n",
+xlim = c(1,109), main = "", lty = 2)
+axis(1, at = seq(1, 110, 1), labels = format(seq(1, 110, 1)))
+lines(exp(DTWS_final$fitted.values[1:143]), col="blue")
+lines(exp(Training_total), lwd = 2, col="green")
+lines(exp(Valid_total), lwd=2, col="red")
+lines(c(80, 80), c(1200000, 2500000))
+lines(c(109, 109), c(1200000, 2500000))
+legend("topleft", inset=c(0, 0), legend=c("Time-based noise forecast",
+"ARMAX on Training Data",
+"ARMAX on Validation Data"),
+col=c("blue","green", "red"), pch=1, cex=0.5)
+```
+```{r}
+setup<-nnetar(weekly_sales[1:114], p=20, repeats=20, lambda="auto")
+Fcast<-forecast(setup, PI=TRUE, h=29)
+#Show results
+autoplot(Fcast)
+```
+```{r}
+plot(weekly_sales, ylim = c(1300000, 2400000), ylab = "Weekly Sales",
+xlab = "Time", type = "l", xaxt = "n",
+xlim = c(1,140), main = "", lty = 2)
+axis(1, at = seq(1, 140, 1), labels = format(seq(1, 140, 1)))
+lines(Fcast$mean, col="darkblue",lwd=2)
+lines(Fcast$fitted, col="red")
+lines(c(80, 80), c(1200000, 2500000))
+lines(c(109, 109), c(1200000, 2500000))
+legend("topleft", inset=c(0, 0), legend=c("Neural Network Forecast - mean value",
+"Actual", "Fitted to Training data"),
+col=c("darkblue","black", "red"), pch=1, cex=0.5)
+```
+```{r}
+setupDT<-nnetar(DTWS_res[1:114], p=20, repeats=20)
+FcastDT<-forecast(setupDT, PI=TRUE, h=29)
+autoplot(FcastDT)
+```
+```{r}
+plot(DTWS_res, ylim = c(-0.056, 0.1), ylab = "Weekly Sales",
+xlab = "Time", type = "l", xaxt = "n",
+xlim = c(-9,9), main = "", lty = 2)
+axis(1, at = seq(-9, 9, 1), labels = format(seq(-9, 9, 1)))
+lines(FcastDT$mean, col="darkblue",lwd=2)
+lines(FcastDT$fitted, col="red")
+lines(c(80, 80), c(1200000, 2500000))
+lines(c(109, 109), c(1200000, 2500000))
+legend("topleft", inset=c(0, 0), legend=c("Neural Network Forecast - mean value",
+"Actual", "Fitted to Training data"),
+col=c("darkblue","black", "red"), pch=1, cex=0.5)
+```
+```{r}
+#ARMAX
+Actual<-weekly_sales[115:143]
+Armax<-Valid_total
+ARMA_MAPE<-mean((abs(Actual-Armax))/Actual)
+ARMA_MAPE
+```
+
+
+```{r}
+#Neural net on actual data
+Nnet_actual<-Fcast$mean
+Nnet_actual_MAPE<-mean(abs(Actual-Nnet_actual)/Actual)
+Nnet_actual_MAPE
+```
+
+
+```{r}
+#Neural net on detrended data
+Actual1<-DTWS_res[115:143]
+Nnet_DT<-FcastDT$mean
+Nnet_DT_MAPE<-mean(abs(Actual1-Nnet_DT)/Actual1)
+Nnet_DT_MAPE
+```
+
+```{r}
+plot(FcastDT$mean, ylim = c(-0.056, 0.1), ylab = "Weekly Sales")
+```
+```{r}
+plot(FcastDT$fitted, ylim = c(-0.056, 0.1), ylab = "Weekly Sales")
+```
+```{r}
+original_min <- 1
+original_max <- 3.5
+
+# Define the target range
+target_min <- 0
+target_max <- 140
+
+# Min-max scaling
+scaled_DTWS_res <- ((DTWS_res - original_min) / (original_max - original_min)) * (target_max - target_min) + target_min
+plot(scaled_DTWS_res, ylab = "Weekly Sales")
+```
+
